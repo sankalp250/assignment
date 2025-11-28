@@ -1,0 +1,14 @@
+# Output videos
+output*.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Debug files
+debug_frame.jpg
+
+# IDE
+.vscode/
+.idea/
