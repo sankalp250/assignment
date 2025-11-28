@@ -5,7 +5,7 @@ import math
 # ============================================================
 # VIDEO SELECTION - Change this to switch between videos
 # ============================================================
-VIDEO_PATH = 'Problem Statement Scenario1.mp4'  # Change to 'Problem Statement Scenario2.mp4' for second video
+VIDEO_PATH = 'Problem Statement Scenario2.mp4'  # Change to 'Problem Statement Scenario1.mp4' for first video
 EXPECTED_BAG_COUNT = 7  # Expected number of bags to count
 OUTPUT_PATH = 'output.mp4'  # Output video file name
 
