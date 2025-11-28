@@ -6,7 +6,7 @@ import math
 # VIDEO SELECTION - Change this to switch between videos
 # ============================================================
 VIDEO_PATH = 'Problem Statement Scenario2.mp4'  # Change to 'Problem Statement Scenario1.mp4' for first video
-EXPECTED_BAG_COUNT = 7  # Expected number of bags to count
+EXPECTED_BAG_COUNT = 16  # Expected number of bags to count (7 for Scenario1, 16 for Scenario2)
 OUTPUT_PATH = 'output.mp4'  # Output video file name
 
 class CentroidTracker:
@@ -131,31 +131,44 @@ def main():
         line_pos = int(width / 2)
         line_start = (line_pos, 0)
         line_end = (line_pos, height)
-        offset = 60
+        offset = 80  # Wider zone for landscape
     else:
+        # For portrait - place line in lower third where bags pass
         line_orientation = 'horizontal'
-        line_pos = int(height / 2)
+        line_pos = int(height * 0.65)  # Lower third instead of middle
         line_start = (0, line_pos)
         line_end = (width, line_pos)
-        offset = 60
+        offset = 100  # Much wider zone for portrait
     
     print(f"Orientation: {'Landscape' if is_landscape else 'Portrait'}")
     print(f"Counting Line: {line_orientation} at position {line_pos}")
     print(f"{'='*60}\n")
 
-    # Initialize background subtractor and tracker
-    fgbg = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=16, detectShadows=False)
-    tracker = CentroidTracker(maxDisappeared=40)
+    # Initialize background subtractor with more aggressive settings
+    fgbg = cv2.createBackgroundSubtractorMOG2(
+        history=300,  # Longer history
+        varThreshold=12,  # Lower threshold = more sensitive
+        detectShadows=False
+    )
+    tracker = CentroidTracker(maxDisappeared=60)  # Increased from 40
     
     # Counting variables
     count = 0
     counted_ids = set()
     
-    # Detection parameters
-    MIN_CONTOUR_AREA = 300
-    MAX_CONTOUR_AREA = 8000
-    MIN_FRAMES_STABLE = 2
-    LEARNING_FRAMES = 15
+    # Detection parameters - MUCH more permissive
+    if is_landscape:
+        MIN_CONTOUR_AREA = 300
+        MAX_CONTOUR_AREA = 8000
+        MIN_ASPECT_RATIO = 0.3
+    else:
+        # Portrait video needs different parameters
+        MIN_CONTOUR_AREA = 200  # Lower minimum
+        MAX_CONTOUR_AREA = 15000  # Higher maximum for larger bags
+        MIN_ASPECT_RATIO = 0.2  # More permissive aspect ratio
+    
+    MIN_FRAMES_STABLE = 1  # Reduced from 2 - count faster
+    LEARNING_FRAMES = 20  # More learning frames
     
     # Video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -173,7 +186,7 @@ def main():
         
         # Learn background in the beginning
         if frame_count <= LEARNING_FRAMES:
-            fgbg.apply(frame, learningRate=0.5)
+            fgbg.apply(frame, learningRate=0.7)  # More aggressive learning
             cv2.putText(frame, f'Learning Background... {frame_count}/{LEARNING_FRAMES}', 
                        (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
             out.write(frame)
@@ -182,14 +195,14 @@ def main():
                 break
             continue
 
-        # Apply background subtraction
-        fgmask = fgbg.apply(frame, learningRate=0.001)
-        _, fgmask = cv2.threshold(fgmask, 200, 255, cv2.THRESH_BINARY)
+        # Apply background subtraction with lower threshold
+        fgmask = fgbg.apply(frame, learningRate=0.0005)  # Very slow learning
+        _, fgmask = cv2.threshold(fgmask, 180, 255, cv2.THRESH_BINARY)  # Lower threshold
 
-        # Morphological operations
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel, iterations=1)
+        # More aggressive morphological operations
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))  # Larger kernel
+        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_CLOSE, kernel, iterations=3)
+        fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel, iterations=2)
 
         # Find contours
         contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -206,9 +219,9 @@ def main():
             
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Aspect ratio filter
+            # Less restrictive aspect ratio filter
             aspect_ratio = w / h if h > 0 else 0
-            if aspect_ratio < 0.3:
+            if aspect_ratio < MIN_ASPECT_RATIO:
                 continue
             
             rect = (x, y, x + w, y + h)
@@ -233,11 +246,14 @@ def main():
                     min_dist = dist
                     closest_box = rect_boxes[i]
             
-            if closest_box and min_dist < 50:
+            if closest_box and min_dist < 80:  # Increased from 50
                 tracked_boxes[objectID] = closest_box
 
         # Draw counting line
-        cv2.line(frame, line_start, line_end, (255, 0, 0), 2)
+        cv2.line(frame, line_start, line_end, (255, 0, 0), 3)
+
+        # Count stable objects
+        stable_count = sum(1 for oid in objects.keys() if tracker.first_seen.get(oid, 0) >= MIN_FRAMES_STABLE)
 
         # Process tracked objects
         for objectID, centroid in objects.items():
@@ -254,9 +270,9 @@ def main():
                 else:
                     distance_from_line = abs(cy - line_pos)
                     
-                is_near_line = distance_from_line < 200
+                is_near_line = distance_from_line < 250  # Increased visibility range
                 
-                # Only draw box if stable AND (near line OR counted)
+                # Draw box if stable AND (near line OR counted)
                 if is_stable and (is_near_line or is_counted):
                     x, y, w, h = tracked_boxes[objectID]
                     
@@ -280,7 +296,7 @@ def main():
                     if is_crossing:
                         count += 1
                         counted_ids.add(objectID)
-                        cv2.line(frame, line_start, line_end, (0, 255, 255), 3)
+                        cv2.line(frame, line_start, line_end, (0, 255, 255), 5)
                         print(f"✓ Bag Counted! Total: {count}")
                         
                         if count >= EXPECTED_BAG_COUNT:
@@ -296,9 +312,11 @@ def main():
                             cv2.waitKey(1000)
                             break
 
-        # Display count
+        # Display count and tracking info
         cv2.putText(frame, f'Count: {count}', (30, 50), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(frame, f'Tracking: {stable_count}', (30, 90), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         # Save and show frame
         out.write(frame)
@@ -320,3 +338,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
